@@ -64,6 +64,7 @@ import net.gotev.speech.SpeechDelegate
 import net.gotev.speech.SpeechRecognitionNotAvailable
 import net.gotev.speech.SpeechUtil
 import net.gotev.speech.ui.SpeechProgressView
+import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import org.xwalk.core.MyXWalkEnvironment
@@ -191,6 +192,7 @@ class MainActivity : BaseActivity(),
                 "$"
 
         // Player Packages
+        const val INTERNAL_PLAYER = "internal" // built-in Media3 player (this app)
         private val MX_PACKAGES = setOf(
             "com.mxtech.videoplayer.ad", // Standard
             "com.mxtech.videoplayer.pro", // Pro
@@ -2236,7 +2238,8 @@ class MainActivity : BaseActivity(),
             val isLIVE = jsonObject.optBoolean("need_check_live_stream", false)
             val isContinueWatch = jsonObject.optBoolean("from_state", false)
             val selectedPlayer = launchPlayer.takeIf { it.isNotBlank() }
-                ?: if (isIPTV || isLIVE) tvPlayer else appPlayer
+                ?: (if (isIPTV || isLIVE) tvPlayer else appPlayer).takeUnless { it.isNullOrBlank() }
+                ?: INTERNAL_PLAYER // built-in player by default when nothing else is chosen
             val videoTitle =
                 jsonObject.optString("title", if (isIPTV) "LAMPA TV" else "LAMPA video")
             val card = getCardFromActivity(playActivity)
@@ -2285,6 +2288,11 @@ class MainActivity : BaseActivity(),
                 )
             }
             state?.let {
+                // --- built-in Media3 player fork hook ---
+                if (INTERNAL_PLAYER.equals(selectedPlayer, ignoreCase = true)) {
+                    launchInternalPlayer(it, videoTitle, isIPTV, headers)
+                    return@let
+                }
                 createBaseIntent(it)?.let {
                     // Get available players
                     val availablePlayers =
@@ -2321,6 +2329,47 @@ class MainActivity : BaseActivity(),
     private fun getHeadersFromState(state: PlayerStateManager.PlaybackState): Array<String>? {
         return (state.extras["headers_array"] as? List<*>)?.filterIsInstance<String>()
             ?.toTypedArray()
+    }
+
+    // Launch the built-in Media3 player (PlayerActivity) through the SAME result path as
+    // external players, so resultPlayer()/Lampa.Timeline.update keep working unchanged.
+    private fun launchInternalPlayer(
+        state: PlayerStateManager.PlaybackState,
+        videoTitle: String,
+        isIPTV: Boolean,
+        headers: Array<String>?
+    ) {
+        val playlistJson = JSONArray()
+        state.playlist.forEach { item ->
+            val o = JSONObject()
+            o.put("url", item.url)
+            o.put("title", item.title ?: videoTitle)
+            item.subtitles?.takeIf { it.isNotEmpty() }?.let { subs ->
+                val sArr = JSONArray()
+                subs.forEach { s ->
+                    sArr.put(JSONObject().apply {
+                        put("url", s.url)
+                        put("label", s.label)
+                        put("language", s.language ?: "")
+                    })
+                }
+                o.put("subtitles", sArr)
+            }
+            playlistJson.put(o)
+        }
+        val intent = Intent(this, PlayerActivity::class.java).apply {
+            putExtra(PlayerActivity.EXTRA_PLAYLIST_JSON, playlistJson.toString())
+            putExtra(PlayerActivity.EXTRA_TITLE, videoTitle)
+            putExtra(PlayerActivity.EXTRA_START_INDEX, state.currentIndex)
+            putExtra(PlayerActivity.EXTRA_START_POSITION, getPlaybackPosition(state)) // ms
+            headers?.let { putExtra(PlayerActivity.EXTRA_HEADERS, it) }
+        }
+        try {
+            resultLauncher.launch(intent) // same launcher/result path as external players
+        } catch (e: Exception) {
+            logDebug("Failed to launch internal player: ${e.message}")
+            App.toast(R.string.no_launch_player, true)
+        }
     }
 
     private fun createBaseIntent(
