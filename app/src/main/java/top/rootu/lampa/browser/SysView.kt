@@ -230,12 +230,12 @@ class SysView(override val mainActivity: MainActivity, override val viewResId: I
         if (BuildConfig.DEBUG)
             browser?.webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+                    // Lampa is very chatty. Forwarding every LOG/DEBUG message through the
+                    // WebChromeClient runs on the app side and is expensive on TV hardware.
                     when (consoleMessage.messageLevel()) {
-                        ConsoleMessage.MessageLevel.LOG -> Log.v(LOG_TAG, consoleMessage.message())
                         ConsoleMessage.MessageLevel.WARNING -> Log.w(LOG_TAG, consoleMessage.message())
                         ConsoleMessage.MessageLevel.ERROR -> Log.e(LOG_TAG, consoleMessage.message())
-                        ConsoleMessage.MessageLevel.DEBUG -> Log.d(LOG_TAG, consoleMessage.message())
-                        else -> Log.i(LOG_TAG,  consoleMessage.message())
+                        else -> Unit
                     }
                     return true
                 }
@@ -281,6 +281,16 @@ class SysView(override val mainActivity: MainActivity, override val viewResId: I
 
     override fun resumeTimers() {
         browser?.resumeTimers()
+    }
+
+    override fun onPauseMedia() {
+        if (!isDestroyed)
+            browser?.onPause()
+    }
+
+    override fun onResumeMedia() {
+        if (!isDestroyed)
+            browser?.onResume()
     }
 
     @RequiresApi(Build.VERSION_CODES.KITKAT)

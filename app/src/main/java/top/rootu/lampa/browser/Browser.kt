@@ -131,6 +131,19 @@ interface Browser {
     fun resumeTimers()
 
     /**
+     * Pauses the page itself, not just its timers: this is what stops any audio the page is
+     * playing and releases its audio track. [pauseTimers] alone does NOT do that — a backgrounded
+     * WebView keeps an OpenSL ES track open and streams silence, which on this Android TV box
+     * wedged the A2DP mixer and muted every other app.
+     */
+    fun onPauseMedia() {}
+
+    /**
+     * Undoes [onPauseMedia] when the activity returns to the foreground.
+     */
+    fun onResumeMedia() {}
+
+    /**
      * Asynchronously evaluates JavaScript in the context of the currently displayed page.
      * If non-null, `resultCallback` will be invoked with any result returned from that
      * execution. This method must be called on the UI thread and the callback will

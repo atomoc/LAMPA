@@ -179,6 +179,14 @@ class MainActivity : BaseActivity(),
         private const val RESULT_VIMU_ERROR = 4
         private const val JS_SUCCESS = "SUCCESS"
         private const val JS_FAILURE = "FAILED"
+        // Controller.long() is what Lampa itself calls when OK is held for 800 ms
+        private const val LAMPA_CONTEXT_MENU_JS =
+            "(function(){try{if(window.appready&&window.Lampa&&Lampa.Controller){" +
+                    // Menu never reaches the page, so wake the screensaver like any key would
+                    "if(Lampa.Screensaver&&Lampa.Screensaver.worked){" +
+                    "window.dispatchEvent(new KeyboardEvent('keydown',{}));" +
+                    "window.dispatchEvent(new KeyboardEvent('keyup',{}));return 1}" +
+                    "Lampa.Controller.long();return 1}}catch(e){}return 0})()"
         private const val IP4_DIG = "([01]?\\d?\\d|2[0-4]\\d|25[0-5])"
         private const val IP4_REGEX = "(${IP4_DIG}\\.){3}${IP4_DIG}"
         private const val IP6_DIG = "[0-9A-Fa-f]{1,4}"
@@ -255,6 +263,153 @@ class MainActivity : BaseActivity(),
         var proxyTmdbEnabled: Boolean = false
         var lampaActivity: String = "{}" // JSON
         lateinit var urlAdapter: ArrayAdapter<String>
+
+        // Match the TV refresh rate to the real frame rate of Lampa's built-in HTML5 video.
+        val VIDEO_FRAME_RATE_JS = """
+(function(){
+  if(window.__lampaAfr)return;window.__lampaAfr=1;
+  var bound=null,boundSrc='',sampleTimer=0,lastFrames=0,lastTime=0,samples=[];
+  function call(f){try{AndroidJS.setVideoFrameRate(f);}catch(e){}}
+  function frames(v){
+    try{
+      var q=v.getVideoPlaybackQuality?v.getVideoPlaybackQuality():null;
+      return (q&&q.totalVideoFrames)||v.webkitDecodedFrameCount||0;
+    }catch(e){return 0;}
+  }
+  function stop(reset){
+    if(sampleTimer){clearInterval(sampleTimer);sampleTimer=0;}
+    lastFrames=0;lastTime=0;samples=[];
+    if(reset)call(0);
+  }
+  function visible(v){return !!(v&&document.documentElement.contains(v)&&v.offsetWidth&&v.offsetHeight);}
+  function attach(v){
+    if(!v)return;
+    stop(false);
+    bound=v;boundSrc=v.currentSrc||v.src||'';
+    function sample(){
+      if(!visible(bound)||bound.ended){stop(true);bound=null;boundSrc='';return;}
+      if(bound.paused||bound.readyState<2)return;
+      var f=frames(bound),t=bound.currentTime;
+      if(lastTime&&t>lastTime+0.7&&t-lastTime<10&&f>=lastFrames){
+        var fps=(f-lastFrames)/(t-lastTime);
+        if(fps>15&&fps<70){
+          samples.push(fps);
+          if(samples.length>=3){
+            samples.sort(function(a,b){return a-b;});
+            call(samples[Math.floor(samples.length/2)]);
+            clearInterval(sampleTimer);sampleTimer=0;
+          }
+        }
+      }
+      lastFrames=f;lastTime=t;
+    }
+    sample();
+    sampleTimer=setInterval(sample,1500);
+  }
+  setInterval(function(){
+    var v=document.querySelector('video');
+    if(!v){
+      if(bound){stop(true);bound=null;boundSrc='';}
+      return;
+    }
+    var src=v.currentSrc||v.src||'';
+    if(v!==bound||src!==boundSrc){attach(v);return;}
+    if(bound&&!visible(bound)){stop(true);bound=null;boundSrc='';}
+  },1000);
+  window.addEventListener('beforeunload',function(){call(0);});
+})();
+"""
+
+        // Phone remote (Pult) types into Lampa's text field without focusing it: focusing opens the
+        // TV's on-screen keyboard, which the phone can't see. Keys typed while the search/input
+        // field is on screen but not focused go straight into its value. The phone sends submit as
+        // NUMPAD_ENTER (keyCode 0 in the page) so it doesn't clash with the remote's OK (13).
+        val PULT_TYPING_JS = """
+(function(){
+  if(window.__pultTyping)return;window.__pultTyping=1;
+  var MOD={Alt:1,AltGraph:1,Shift:1,Control:1,Meta:1,CapsLock:1};
+  function J(){return window.jQuery||window.${'$'};}
+  function field(){
+    var el=document.getElementById('orsay-keyboard');
+    return el&&el.offsetParent?el:null;
+  }
+  // Focused field (TV keyboard open) or some other input: typing goes there natively.
+  function busy(el){var a=document.activeElement;return a&&(a===el||a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.isContentEditable);}
+  function submit(e){return e.key==='Enter'&&!e.keyCode;}
+  function mine(e,el){var k=e.key||'';if(submit(e))return true;if(busy(el))return false;
+    return MOD[k]||k==='Backspace'||(Array.from(k).length===1&&!e.ctrlKey&&!e.metaKey);}
+  function put(el,v){el.value=v;if(J())J()(el).trigger('input');else el.dispatchEvent(new Event('input'));}
+  function stop(e){e.preventDefault();e.stopImmediatePropagation();}
+  window.addEventListener('keydown',function(e){
+    var el=field();if(!el||!mine(e,el))return;
+    var k=e.key;stop(e);
+    if(MOD[k])return;
+    if(k==='Backspace')return put(el,Array.from(el.value).slice(0,-1).join(''));
+    if(submit(e)){
+      if(J())J()(el).trigger(J().Event('keyup',{keyCode:13,which:13}));
+      // The main search has no "enter": results are live, so go down to the first card.
+      var C=window.Lampa&&Lampa.Controller;
+      if(J()&&C&&document.body.classList.contains('search--open')&&C.enabled().name==='keybord'){
+        J()(el).trigger(J().Event('keyup',{keyCode:40,which:40}));
+        for(var i=0;i<2&&/^search_(history|sources)${'$'}/.test(C.enabled().name);i++)C.move('down');
+        // Results may still be loading right after typing: step down once they show up.
+        var n=0,t=setInterval(function(){
+          if(++n>20||C.enabled().name!=='search_sources')return clearInterval(t);
+          if(document.querySelector('.search__results .card'))C.move('down');
+        },150);
+      }
+      return;
+    }
+    put(el,el.value+k);
+  },true);
+  ['keyup','keypress'].forEach(function(t){window.addEventListener(t,function(e){var el=field();if(el&&mine(e,el))stop(e);},true);});
+})();
+"""
+
+        // Twitch header button (ported from the lampa-desktop plugin's plugin.js). Adds a Twitch
+        // icon into Lampa's header ".head__actions" via Lampa's own API/focus system; pressing it
+        // (hover:enter) calls the AndroidJS.openTwitch() bridge, which launches the native Twitch
+        // app. Idempotent + a slow interval re-adds it after Lampa rebuilds the header.
+        val TWITCH_BUTTON_JS = """
+(function(){
+  var SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714Z"/></svg>';
+  function add(){
+    try{
+      if(!window.Lampa||!Lampa.Head||!Lampa.Head.render){return setTimeout(add,1000);}
+      var actions=Lampa.Head.render().find('.head__actions');
+      if(!actions||!actions.length){return setTimeout(add,1000);}
+      if(actions.find('.lampa-twitch-btn').length){return;}
+      var btn=${'$'}('<div class="head__action selector lampa-twitch-btn">'+SVG+'</div>');
+      btn.on('hover:enter',function(){try{AndroidJS.openTwitch();}catch(e){}});
+      actions.prepend(btn);
+    }catch(e){setTimeout(add,1500);}
+  }
+  add();
+  setInterval(function(){try{var a=Lampa.Head.render().find('.head__actions');if(a&&a.length&&!a.find('.lampa-twitch-btn').length){add();}}catch(e){}},4000);
+})();
+"""
+
+        // YouTube header button (ported from the lampa-desktop plugin's plugin.js). Same pattern as
+        // the Twitch button; hover:enter -> AndroidJS.openYoutubeTv() opens the in-app YouTube TV
+        // (leanback) WebView. Idempotent + a slow interval re-adds it after Lampa rebuilds the head.
+        val YOUTUBE_BUTTON_JS = """
+(function(){
+  var SVG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M21.582 6.186a2.506 2.506 0 0 0-1.762-1.766C18.265 4 12 4 12 4s-6.264 0-7.818.42a2.506 2.506 0 0 0-1.762 1.766C2 7.74 2 12 2 12s0 4.262.42 5.814a2.506 2.506 0 0 0 1.762 1.766C5.735 20 12 20 12 20s6.265 0 7.82-.42a2.506 2.506 0 0 0 1.762-1.766C22 16.262 22 12 22 12s0-4.262-.418-5.814M10 15.464V8.536L16 12l-6 3.464"/></svg>';
+  function add(){
+    try{
+      if(!window.Lampa||!Lampa.Head||!Lampa.Head.render){return setTimeout(add,1000);}
+      var actions=Lampa.Head.render().find('.head__actions');
+      if(!actions||!actions.length){return setTimeout(add,1000);}
+      if(actions.find('.lampa-youtube-btn').length){return;}
+      var btn=${'$'}('<div class="head__action selector lampa-youtube-btn">'+SVG+'</div>');
+      btn.on('hover:enter',function(){try{AndroidJS.openYoutubeTv();}catch(e){}});
+      actions.prepend(btn);
+    }catch(e){setTimeout(add,1500);}
+  }
+  add();
+  setInterval(function(){try{var a=Lampa.Head.render().find('.head__actions');if(a&&a.length&&!a.find('.lampa-youtube-btn').length){add();}}catch(e){}},4000);
+})();
+"""
     }
 
     inline fun <reified T> T.logDebug(message: String) {
@@ -335,6 +490,83 @@ class MainActivity : BaseActivity(),
         super.onPause()
     }
 
+    override fun onStop() {
+        // Genuinely backgrounded (Home, or we launched Twitch/YouTube from the header buttons).
+        // Pausing timers is not enough: the WebView keeps an audio track open and streams silence,
+        // which starves the A2DP mixer and mutes whatever app the user switched to. Release the
+        // page's media and drop audio focus so the foreground app can actually be heard.
+        // The external-player case is excluded — there the browser must keep running.
+        if (!isPlayerLaunching) {
+            if (browserInitComplete) browser?.onPauseMedia()
+            abandonAudioFocus()
+        }
+        resetVideoFrameRate()
+        super.onStop()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (browserInitComplete && !isPlayerLaunching) browser?.onResumeMedia()
+    }
+
+    /** Drops any audio focus the page grabbed, so a backgrounded LAMPA never ducks other apps. */
+    private fun abandonAudioFocus() {
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+            @Suppress("DEPRECATION")
+            am?.abandonAudioFocus(null)
+        } catch (e: Exception) {
+            Log.e(TAG, "abandonAudioFocus failed: ${e.message}")
+        }
+    }
+
+    /** Select a low refresh-rate multiple of the built-in video's measured frame rate. */
+    fun setVideoFrameRate(contentFps: Double) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        if (!contentFps.isFinite() || contentFps <= 0.0) {
+            resetVideoFrameRate()
+            return
+        }
+
+        val desiredHz = when {
+            contentFps in 22.0..24.5 -> 48.0
+            contentFps in 24.5..25.5 -> 50.0
+            contentFps in 29.0..29.985 -> 59.94
+            contentFps in 29.985..30.5 -> 60.0
+            contentFps in 49.0..50.5 -> 50.0
+            contentFps in 58.5..59.97 -> 59.94
+            contentFps in 59.97..60.5 -> 60.0
+            else -> return
+        }
+
+        val display = window.decorView.display ?: return
+        val target = display.supportedModes
+            .minByOrNull { kotlin.math.abs(it.refreshRate.toDouble() - desiredHz) }
+            ?.takeIf { kotlin.math.abs(it.refreshRate.toDouble() - desiredHz) < 0.25 }
+            ?: return
+
+        val attrs = window.attributes
+        if (attrs.preferredDisplayModeId == target.modeId &&
+            kotlin.math.abs(attrs.preferredRefreshRate - target.refreshRate) < 0.01f
+        ) return
+
+        attrs.preferredDisplayModeId = target.modeId
+        attrs.preferredRefreshRate = target.refreshRate
+        window.attributes = attrs
+        Log.i(TAG, "AFR " + String.format(Locale.US, "%.3f", contentFps) +
+                " fps -> " + target.refreshRate + " Hz (mode " + target.modeId + ")")
+    }
+
+    fun resetVideoFrameRate() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val attrs = window.attributes
+        if (attrs.preferredDisplayModeId == 0 && attrs.preferredRefreshRate == 0f) return
+        attrs.preferredDisplayModeId = 0
+        attrs.preferredRefreshRate = 0f
+        window.attributes = attrs
+        Log.i(TAG, "AFR reset to system default")
+    }
+
     override fun onDestroy() {
         browserMediaSession.stop()
         PlaybackService.stop(this)
@@ -384,7 +616,13 @@ class MainActivity : BaseActivity(),
             || keyCode == KeyEvent.KEYCODE_TV_MEDIA_CONTEXT_MENU
         ) {
             logDebug("Menu key pressed")
-            showMenuDialog()
+            // Menu = Lampa's context menu (same as holding OK, which ADB/phone remotes
+            // can't do: they send DOWN+UP at once). The app menu stays on long-press Back;
+            // fall back to it only if Lampa isn't loaded yet.
+            if (event?.repeatCount ?: 0 > 0) return true
+            browser?.evaluateJavascript(LAMPA_CONTEXT_MENU_JS) { result ->
+                if (result != "1") showMenuDialog()
+            } ?: showMenuDialog()
             return true
         }
         return super.onKeyDown(keyCode, event)
@@ -430,6 +668,12 @@ class MainActivity : BaseActivity(),
         loaderView.visibility = View.GONE
 
         Log.d(TAG, "LAMPA onLoadFinished $url")
+
+        // Inject the Twitch + YouTube header buttons (ported from the lampa-desktop plugin).
+        browser?.evaluateJavascript(TWITCH_BUTTON_JS) { }
+        browser?.evaluateJavascript(YOUTUBE_BUTTON_JS) { }
+        browser?.evaluateJavascript(PULT_TYPING_JS) { }
+        browser?.evaluateJavascript(VIDEO_FRAME_RATE_JS) { }
 
         lifecycleScope.launch {
             syncLanguage()

@@ -69,6 +69,16 @@ class XWalk(override val mainActivity: MainActivity, override val viewResId: Int
         browser?.resumeTimers()
     }
 
+    override fun onPauseMedia() {
+        if (!isDestroyed)
+            browser?.onHide()   // XWalk's equivalent: suspends the page, stopping its media
+    }
+
+    override fun onResumeMedia() {
+        if (!isDestroyed)
+            browser?.onShow()
+    }
+
     override fun evaluateJavascript(script: String, resultCallback: (String) -> Unit) {
         browser?.evaluateJavascript(script, resultCallback)
     }

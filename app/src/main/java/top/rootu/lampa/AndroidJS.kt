@@ -270,6 +270,14 @@ class AndroidJS(private val mainActivity: MainActivity, private val browser: Bro
 
     @JavascriptInterface
     @org.xwalk.core.JavascriptInterface
+    fun setVideoFrameRate(fps: Double) {
+        mainActivity.runOnUiThread {
+            mainActivity.setVideoFrameRate(fps)
+        }
+    }
+
+    @JavascriptInterface
+    @org.xwalk.core.JavascriptInterface
     fun openYoutube(str: String) {
         val intent = Intent(
             Intent.ACTION_VIEW,
@@ -281,6 +289,69 @@ class AndroidJS(private val mainActivity: MainActivity, private val browser: Bro
             } catch (e: Exception) {
                 Log.e(TAG, e.message, e)
                 App.toast(R.string.no_youtube_activity_found, true)
+            }
+        }
+    }
+
+    // Twitch integration (ported from the lampa-desktop plugin): the header button calls this,
+    // which launches an installed native Twitch client. On Android the fgl27 "SmartTV for Twitch"
+    // (com.fgl27.twitch, ExoPlayer-based, the same app vendored in lampa-desktop) is preferred;
+    // falls back to the official Twitch app. No in-WebView Twitch: the web client needs CORS-off
+    // + a native ExoPlayer bridge that a plain WebView can't provide.
+    @JavascriptInterface
+    @org.xwalk.core.JavascriptInterface
+    fun openTwitch() {
+        val candidates = listOf(
+            "com.fgl27.twitch",        // fgl27 SmartTV for Twitch (preferred; vendored in lampa-desktop)
+            "com.fgl27.twitch.debug",  // its debug build
+            "tv.twitch.android.app"    // official Twitch (mobile/AndroidTV)
+        )
+        mainActivity.runOnUiThread {
+            try {
+                val pm = mainActivity.packageManager
+                val launch = candidates.asSequence()
+                    .mapNotNull { pm.getLaunchIntentForPackage(it) }
+                    .firstOrNull()
+                if (launch != null) {
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    mainActivity.startActivity(launch)
+                } else {
+                    App.toast("Twitch не установлен. Установите SmartTV for Twitch (fgl27).", true)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "openTwitch failed: ${e.message}", e)
+                App.toast(R.string.generic_error, true)
+            }
+        }
+    }
+
+    // YouTube integration (ported from the lampa-desktop plugin). Desktop opens youtube.com/tv in
+    // Chromium; but this box's System WebView is Chromium 73 (2019) and the leanback SPA won't
+    // render on it. So prefer a NATIVE YouTube TV app if installed (reliable D-pad + video), and
+    // fall back to the in-app WebView leanback (YoutubeTvActivity, PS4 UA) only when none exists.
+    @JavascriptInterface
+    @org.xwalk.core.JavascriptInterface
+    fun openYoutubeTv() {
+        val nativeApps = listOf(
+            "com.google.android.youtube.tv",  // official YouTube for Android TV
+            "com.liskovsoft.smarttubetv",     // SmartTube (ad-free AndroidTV YouTube)
+            "com.google.android.youtube"      // official YouTube (mobile)
+        )
+        mainActivity.runOnUiThread {
+            try {
+                val pm = mainActivity.packageManager
+                val launch = nativeApps.asSequence()
+                    .mapNotNull { pm.getLaunchIntentForPackage(it) }
+                    .firstOrNull()
+                if (launch != null) {
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    mainActivity.startActivity(launch)
+                } else {
+                    mainActivity.startActivity(Intent(mainActivity, YoutubeTvActivity::class.java))
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "openYoutubeTv failed: ${e.message}", e)
+                App.toast(R.string.generic_error, true)
             }
         }
     }

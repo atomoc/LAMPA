@@ -145,6 +145,13 @@
             android:launchMode="singleTop"
             android:screenOrientation="userLandscape"
             android:theme="@style/Theme.LAMPA" />
+        <activity
+            android:name=".YoutubeTvActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:screenOrientation="userLandscape"
+            android:theme="@style/Theme.LAMPA" />
 
         <uses-library
             android:name="org.apache.http.legacy"

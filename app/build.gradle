@@ -40,8 +40,8 @@ android {
         minSdkVersion 21 // was 16 — raised for AndroidX Media3 (built-in player). Android TV is >=21.
         //noinspection ExpiredTargetSdkVersion
         targetSdkVersion 28
-        versionCode getVersionCode()
-        versionName getVersionName()
+        versionCode 900        // was getVersionCode() -> 1 in shallow clone; high so Lampa doesn't nag "update to vN"
+        versionName "1.13.0"   // was getVersionName() -> 0.0.0 in shallow clone; AndroidJS.appVersion() reports this
         multiDexEnabled = true // required when setting minSdkVersion to 20 or lower
         // Use SupportLibrary for vectors
         vectorDrawables.useSupportLibrary = true
@@ -68,6 +68,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Install debug builds side-by-side with the official LAMPA so its data/settings stay untouched.
+            applicationIdSuffix ".builtin"
+        }
         release {
             signingConfig signingConfigs.release
             minifyEnabled false
