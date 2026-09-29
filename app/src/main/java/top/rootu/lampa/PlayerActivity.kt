@@ -3,7 +3,9 @@ package top.rootu.lampa
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
@@ -21,8 +23,11 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.PlayerView
 import org.json.JSONArray
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Built-in Media3/ExoPlayer video player for the LAMPA fork.
@@ -92,8 +97,14 @@ class PlayerActivity : AppCompatActivity() {
 
         val dataSourceFactory = DefaultDataSource.Factory(this, httpFactory)
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
+        val trackSelector = DefaultTrackSelector(this).apply {
+            parameters = buildUponParameters()
+                .setTunnelingEnabled(true)
+                .build()
+        }
 
         val exo = ExoPlayer.Builder(this, renderers)
+            .setTrackSelector(trackSelector)
             .setMediaSourceFactory(mediaSourceFactory)
             .setSeekBackIncrementMs(10_000)
             .setSeekForwardIncrementMs(10_000)
@@ -101,7 +112,9 @@ class PlayerActivity : AppCompatActivity() {
 
         exo.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_ENDED) {
+                if (state == Player.STATE_READY) {
+                    probeVideoRefreshRate(exo)
+                } else if (state == Player.STATE_ENDED) {
                     completed = true
                     finishWithResult()
                 }
@@ -194,6 +207,63 @@ class PlayerActivity : AppCompatActivity() {
         return map.ifEmpty { null }
     }
 
+    private fun probeVideoRefreshRate(exo: ExoPlayer, attempt: Int = 0) {
+        val fps = exo.videoFormat?.frameRate ?: -1f
+        Log.i("PlayerActivity", "videoFormat frameRate=" + fps + " attempt=" + attempt)
+        if (fps.isFinite() && fps > 0f) {
+            applyVideoRefreshRate(fps)
+            return
+        }
+        if (attempt < 20) {
+            playerView.postDelayed({
+                if (player === exo || player == null) probeVideoRefreshRate(exo, attempt + 1)
+            }, 500L)
+        }
+    }
+
+    private fun applyVideoRefreshRate(contentFps: Float) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || !contentFps.isFinite() || contentFps <= 0f) return
+
+        val display = window.decorView.display ?: return
+        val currentMode = display.mode
+        val fps = contentFps.toDouble()
+        val candidates = display.supportedModes
+            .filter { it.physicalWidth == currentMode.physicalWidth && it.physicalHeight == currentMode.physicalHeight }
+            .filter { it.refreshRate <= 120.5f && it.refreshRate + 0.01f >= contentFps }
+
+        val exactTarget = candidates
+            .mapNotNull { mode ->
+                val multiple = (mode.refreshRate / fps).roundToInt().coerceAtLeast(1)
+                val error = abs(mode.refreshRate - fps * multiple)
+                if (multiple in 1..6 && error < 0.15) Triple(mode, error, multiple) else null
+            }
+            .sortedWith(compareBy<Triple<android.view.Display.Mode, Double, Int>> { it.second }
+                .thenByDescending { it.first.refreshRate })
+            .firstOrNull()
+            ?.first
+
+        // Some sources really are odd rates (e.g. 23.000 fps). If the TV has no exact
+        // integer-multiple mode, use the highest <=120 Hz mode. The repeat cadence then
+        // varies by only one short refresh interval instead of a large 48/60-Hz judder.
+        val target = exactTarget ?: candidates.maxByOrNull { it.refreshRate } ?: return
+
+        val attrs = window.attributes
+        if (attrs.preferredDisplayModeId == target.modeId) return
+        attrs.preferredDisplayModeId = target.modeId
+        attrs.preferredRefreshRate = target.refreshRate
+        window.attributes = attrs
+        Log.i("PlayerActivity", "AFR " + contentFps + " fps -> " + target.refreshRate + " Hz (mode " + target.modeId + ")")
+    }
+
+    private fun resetVideoRefreshRate() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val attrs = window.attributes
+        if (attrs.preferredDisplayModeId == 0 && attrs.preferredRefreshRate == 0f) return
+        attrs.preferredDisplayModeId = 0
+        attrs.preferredRefreshRate = 0f
+        window.attributes = attrs
+    }
+
     private fun finishWithResult() {
         if (resultSent) return
         resultSent = true
@@ -214,6 +284,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun releasePlayer() {
+        resetVideoRefreshRate()
         mediaSession?.release()
         mediaSession = null
         player?.let {
