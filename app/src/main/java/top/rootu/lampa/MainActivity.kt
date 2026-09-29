@@ -528,22 +528,28 @@ class MainActivity : BaseActivity(),
             return
         }
 
-        val desiredHz = when {
-            contentFps in 22.0..24.5 -> 48.0
-            contentFps in 24.5..25.5 -> 50.0
-            contentFps in 29.0..29.985 -> 59.94
-            contentFps in 29.985..30.5 -> 60.0
-            contentFps in 49.0..50.5 -> 50.0
-            contentFps in 58.5..59.97 -> 59.94
-            contentFps in 59.97..60.5 -> 60.0
-            else -> return
-        }
-
         val display = window.decorView.display ?: return
-        val target = display.supportedModes
-            .minByOrNull { kotlin.math.abs(it.refreshRate.toDouble() - desiredHz) }
-            ?.takeIf { kotlin.math.abs(it.refreshRate.toDouble() - desiredHz) < 0.25 }
-            ?: return
+        val currentMode = display.mode
+        val fps = contentFps
+        val candidates = display.supportedModes
+            .filter { it.physicalWidth == currentMode.physicalWidth && it.physicalHeight == currentMode.physicalHeight }
+            .filter { it.refreshRate <= 120.5f && it.refreshRate + 0.01 >= fps }
+
+        val exactTarget = candidates
+            .mapNotNull { mode ->
+                val multiple = kotlin.math.round(mode.refreshRate / fps).toInt().coerceAtLeast(1)
+                val error = kotlin.math.abs(mode.refreshRate - fps * multiple)
+                if (multiple in 1..6 && error < 0.15) Triple(mode, error, multiple) else null
+            }
+            .sortedWith(compareBy<Triple<android.view.Display.Mode, Double, Int>> { it.second }
+                .thenByDescending { it.first.refreshRate })
+            .firstOrNull()
+            ?.first
+
+        // Some Filmix/CDN files really are odd rates such as exactly 23.000 fps.
+        // When the TV has no exact integer multiple, prefer the highest <=120 Hz mode:
+        // the residual cadence error becomes much smaller than at 48/60 Hz.
+        val target = exactTarget ?: candidates.maxByOrNull { it.refreshRate } ?: return
 
         val attrs = window.attributes
         if (attrs.preferredDisplayModeId == target.modeId &&
