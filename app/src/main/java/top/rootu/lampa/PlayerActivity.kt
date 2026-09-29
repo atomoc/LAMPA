@@ -45,6 +45,7 @@ import org.json.JSONArray
 class PlayerActivity : AppCompatActivity() {
 
     private var player: ExoPlayer? = null
+    private var mediaSession: PlayerMediaSession? = null
     private lateinit var playerView: PlayerView
 
     private var startIndex = 0
@@ -121,6 +122,7 @@ class PlayerActivity : AppCompatActivity() {
         exo.playWhenReady = true
         exo.prepare()
         player = exo
+        mediaSession = PlayerMediaSession(this, exo)
     }
 
     private fun parsePlaylist(json: String?): List<MediaItem> {
@@ -140,9 +142,13 @@ class PlayerActivity : AppCompatActivity() {
                 .setUri(url)
                 .setMediaId(url) // must equal the Lampa URL so resultPlayer() can match the playlist item
 
-            o.optString("title").takeIf { it.isNotBlank() }?.let { title ->
-                builder.setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
+            val title = o.optString("title").ifBlank { intent.getStringExtra(EXTRA_TITLE).orEmpty() }
+            val metadata = MediaMetadata.Builder().setTitle(title)
+            o.optString("artwork").takeIf { it.isNotBlank() }?.let { value ->
+                val uri = Uri.parse(value)
+                if (uri.scheme in setOf("https", "http")) metadata.setArtworkUri(uri)
             }
+            builder.setMediaMetadata(metadata.build())
 
             o.optJSONArray("subtitles")?.let { subsArr ->
                 val subs = ArrayList<MediaItem.SubtitleConfiguration>()
@@ -208,6 +214,8 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun releasePlayer() {
+        mediaSession?.release()
+        mediaSession = null
         player?.let {
             playerView.player = null
             it.release()

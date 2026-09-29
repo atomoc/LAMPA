@@ -142,6 +142,9 @@ class MainActivity : BaseActivity(),
     private var mXWalkUpdater: MyXWalkUpdater? = null
     private var mXWalkInitializer: XWalkInitializer? = null
     private var browser: Browser? = null
+    private val browserMediaSession by lazy {
+        BrowserMediaSession(this) { browser?.takeIf { browserInitComplete } }
+    }
     private var browserInitComplete = false
     private var isMenuVisible = false
     private var isPlayerLaunching = false // suppress WebView pauseTimers while our external player is open
@@ -301,6 +304,7 @@ class MainActivity : BaseActivity(),
 
     override fun onResume() {
         super.onResume()
+        browserMediaSession.start()
         isPlayerLaunching = false // returned to foreground; player (if any) is closed
         browser?.setKeepVisible(false) // restore normal visibility handling
         PlaybackService.stop(this) // no longer need to hold the process foreground
@@ -323,6 +327,7 @@ class MainActivity : BaseActivity(),
     }
 
     override fun onPause() {
+        browserMediaSession.stop()
         // Keep JS timers (and the RCH socket heartbeat) alive while our external player is open,
         // but only when the user enabled it. Home/real backgrounding still pauses as before.
         if (browserInitComplete && !(isPlayerLaunching && keepPlayerConnection))
@@ -331,6 +336,7 @@ class MainActivity : BaseActivity(),
     }
 
     override fun onDestroy() {
+        browserMediaSession.stop()
         PlaybackService.stop(this)
         if (browserInitComplete) {
             browser?.apply {
@@ -2339,11 +2345,19 @@ class MainActivity : BaseActivity(),
         isIPTV: Boolean,
         headers: Array<String>?
     ) {
+        val card = (state.extras[LAMPA_CARD_KEY] as? String)?.let {
+            try { JSONObject(it) } catch (_: Exception) { null }
+        }
+        val cardArtwork = sequenceOf("background_image", "img", "poster")
+            .mapNotNull { card?.optString(it)?.takeIf { url -> url.startsWith("https://") || url.startsWith("http://") } }
+            .firstOrNull()
         val playlistJson = JSONArray()
         state.playlist.forEach { item ->
             val o = JSONObject()
             o.put("url", item.url)
             o.put("title", item.title ?: videoTitle)
+            val artwork = item.thumbnail?.takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: cardArtwork
+            if (artwork != null) o.put("artwork", artwork)
             item.subtitles?.takeIf { it.isNotEmpty() }?.let { subs ->
                 val sArr = JSONArray()
                 subs.forEach { s ->
