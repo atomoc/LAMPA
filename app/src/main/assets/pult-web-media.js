@@ -14,9 +14,14 @@
         var active = lampa.Activity && lampa.Activity.active ? lampa.Activity.active() || {} : {};
         var movie = active.movie || {};
         var series = text(movie.title || movie.name, 250);
-        var title = text(work.title || work.name, 250);
+        var streamTitle = text(work.title || work.name, 250);
         var label = document.querySelector('.player-info__title');
-        if (!title) title = text(label && label.textContent, 250) || series;
+        var uiTitle = text(label && label.textContent, 250);
+        // playdata.title can be a stream/audio label (for example "Русский"), not content.
+        // Prefer Lampa's visible player title. Without it, only treat playdata as content
+        // when it structurally looks like an episode/season label; otherwise use the card.
+        var episodeTitle = /(?:^|\s)(?:серия|сезон|episode|season)\s*\d+|\bS\d+E\d+\b|\b\d+\s*[xх]\s*\d+\b/i.test(streamTitle) ? streamTitle : '';
+        var title = uiTitle || episodeTitle || series || streamTitle;
         var subtitle = series && series !== title ? series : '';
         // A portrait poster fits the phone without enlarging a narrow landscape crop.
         var tmdbPath = text(movie.poster_path || movie.backdrop_path, 1024);

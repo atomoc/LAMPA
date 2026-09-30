@@ -1384,6 +1384,7 @@ class MainActivity : BaseActivity(),
         intent.getStringExtra("cmd")?.let { cmd ->
             when (cmd) {
                 "open_settings" -> showMenuDialog()
+                "context_menu" -> runVoidJsFunc("Lampa.Controller.long", "")
             }
         }
         // Handle an external search query (e.g. from a voice assistant or a
