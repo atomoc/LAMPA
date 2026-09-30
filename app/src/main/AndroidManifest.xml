@@ -28,6 +28,12 @@
         <package android:name="com.google.android.katniss" />
         <package android:name="net.gtvbox.videoplayer" />
         <package android:name="net.gtvbox.vimuhd" />
+        <package android:name="com.fgl27.twitch" />
+        <package android:name="com.fgl27.twitch.debug" />
+        <package android:name="tv.twitch.android.app" />
+        <package android:name="com.google.android.youtube.tv" />
+        <package android:name="com.liskovsoft.smarttubetv" />
+        <package android:name="com.google.android.youtube" />
         <package android:name="org.telegram.messenger" />
         <package android:name="org.telegram.plus" />
         <package android:name="org.telegram.messenger.web" />

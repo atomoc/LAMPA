@@ -378,14 +378,18 @@ class MainActivity : BaseActivity(),
       if(!window.Lampa||!Lampa.Head||!Lampa.Head.render){return setTimeout(add,1000);}
       var actions=Lampa.Head.render().find('.head__actions');
       if(!actions||!actions.length){return setTimeout(add,1000);}
-      if(actions.find('.lampa-twitch-btn').length){return;}
+      var installed=false;
+      try{installed=!!AndroidJS.isTwitchInstalled();}catch(e){}
+      var existing=actions.find('.lampa-twitch-btn');
+      if(!installed){if(existing&&existing.length)existing.remove();return;}
+      if(existing&&existing.length){return;}
       var btn=${'$'}('<div class="head__action selector lampa-twitch-btn">'+SVG+'</div>');
       btn.on('hover:enter',function(){try{AndroidJS.openTwitch();}catch(e){}});
       actions.prepend(btn);
     }catch(e){setTimeout(add,1500);}
   }
   add();
-  setInterval(function(){try{var a=Lampa.Head.render().find('.head__actions');if(a&&a.length&&!a.find('.lampa-twitch-btn').length){add();}}catch(e){}},4000);
+  setInterval(add,4000);
 })();
 """
 

@@ -300,6 +300,17 @@ class AndroidJS(private val mainActivity: MainActivity, private val browser: Bro
     // + a native ExoPlayer bridge that a plain WebView can't provide.
     @JavascriptInterface
     @org.xwalk.core.JavascriptInterface
+    fun isTwitchInstalled(): Boolean {
+        val pm = mainActivity.packageManager
+        return listOf(
+            "com.fgl27.twitch",
+            "com.fgl27.twitch.debug",
+            "tv.twitch.android.app"
+        ).any { pm.getLaunchIntentForPackage(it) != null }
+    }
+
+    @JavascriptInterface
+    @org.xwalk.core.JavascriptInterface
     fun openTwitch() {
         val candidates = listOf(
             "com.fgl27.twitch",        // fgl27 SmartTV for Twitch (preferred; vendored in lampa-desktop)
